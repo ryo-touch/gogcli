@@ -9,15 +9,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"google.golang.org/api/sheets/v4"
 )
 
 func TestSheetsDataSourceListAndDescribe(t *testing.T) {
-	srv, queries := newConnectedSheetsFixtureServer(t)
-	defer srv.Close()
-	svc := newSheetsServiceFromServer(t, srv)
+	fixture := newConnectedSheetsFixtureServer(t)
+	svc := newSheetsServiceFromServer(t, fixture.server)
 
 	listResult := executeWithSheetsTestService(t, []string{
 		"--json", "--account", "services@openclaw.org",
@@ -75,15 +75,15 @@ func TestSheetsDataSourceListAndDescribe(t *testing.T) {
 		!strings.Contains(describeResult.stdout, `"dataSourceSchedules"`) {
 		t.Fatalf("describe output missing full source/sheet/schedule detail: %s", describeResult.stdout)
 	}
-	if len(*queries) < 2 || !strings.Contains((*queries)[0], "dataSources") || !strings.Contains((*queries)[0], "dataSourceSheetProperties") {
-		t.Fatalf("unexpected field mask queries: %#v", *queries)
+	queries := fixture.Queries()
+	if len(queries) < 2 || !strings.Contains(queries[0], "dataSources") || !strings.Contains(queries[0], "dataSourceSheetProperties") {
+		t.Fatalf("unexpected field mask queries: %#v", queries)
 	}
 }
 
 func TestSheetsDataSourceTableListDescribeAndRead(t *testing.T) {
-	srv, queries := newConnectedSheetsFixtureServer(t)
-	defer srv.Close()
-	svc := newSheetsServiceFromServer(t, srv)
+	fixture := newConnectedSheetsFixtureServer(t)
+	svc := newSheetsServiceFromServer(t, fixture.server)
 
 	listResult := executeWithSheetsTestService(t, []string{
 		"--json", "--account", "services@openclaw.org",
@@ -131,14 +131,14 @@ func TestSheetsDataSourceTableListDescribeAndRead(t *testing.T) {
 		t.Fatalf("unexpected table read: %#v", read)
 	}
 
-	joinedQueries := strings.Join(*queries, "\n")
+	joinedQueries := strings.Join(fixture.Queries(), "\n")
 	if !strings.Contains(joinedQueries, "includeGridData=true") || !strings.Contains(joinedQueries, "dataSourceTable") {
 		t.Fatalf("table discovery did not request anchor definitions: %s", joinedQueries)
 	}
 	// A SELECTED table lists its own columns, so it must not pay for the
 	// unranged column lookup.
-	if got := countUnrangedColumnLookups(*queries); got != 0 {
-		t.Fatalf("unranged column lookups = %d, want 0: %#v", got, *queries)
+	if got := countUnrangedColumnLookups(fixture.Queries()); got != 0 {
+		t.Fatalf("unranged column lookups = %d, want 0: %#v", got, fixture.Queries())
 	}
 }
 
@@ -160,9 +160,8 @@ func countUnrangedColumnLookups(queries []string) int {
 }
 
 func TestSheetsDataSourceTableReadSyncAllExtract(t *testing.T) {
-	srv, queries := newConnectedSheetsFixtureServer(t)
-	defer srv.Close()
-	svc := newSheetsServiceFromServer(t, srv)
+	fixture := newConnectedSheetsFixtureServer(t)
+	svc := newSheetsServiceFromServer(t, fixture.server)
 
 	// A SYNC_ALL extract carries no inline column list, and the ranged
 	// spreadsheets.get that locates the anchor omits the DATA_SOURCE sheet that
@@ -193,8 +192,8 @@ func TestSheetsDataSourceTableReadSyncAllExtract(t *testing.T) {
 	}
 	// Exactly one extra lookup: the ranged anchor fetch cannot supply the columns,
 	// and repeating it per read would multiply the request cost.
-	if got := countUnrangedColumnLookups(*queries); got != 1 {
-		t.Fatalf("unranged column lookups = %d, want 1: %#v", got, *queries)
+	if got := countUnrangedColumnLookups(fixture.Queries()); got != 1 {
+		t.Fatalf("unranged column lookups = %d, want 1: %#v", got, fixture.Queries())
 	}
 }
 
@@ -273,9 +272,8 @@ func TestWrapConnectedSheetsReadError(t *testing.T) {
 }
 
 func TestSheetsMetadataIncludesConnectedSheets(t *testing.T) {
-	srv, _ := newConnectedSheetsFixtureServer(t)
-	defer srv.Close()
-	svc := newSheetsServiceFromServer(t, srv)
+	fixture := newConnectedSheetsFixtureServer(t)
+	svc := newSheetsServiceFromServer(t, fixture.server)
 	var out bytes.Buffer
 	ctx := withSheetsTestService(newCmdRuntimeJSONOutputContext(t, &out, io.Discard), svc)
 	if err := (&SheetsMetadataCmd{SpreadsheetID: "connected1"}).Run(ctx, &RootFlags{Account: "services@openclaw.org"}); err != nil {
@@ -286,7 +284,54 @@ func TestSheetsMetadataIncludesConnectedSheets(t *testing.T) {
 	}
 }
 
-func newConnectedSheetsFixtureServer(t *testing.T) (*httptest.Server, *[]string) {
+// connectedSheetsFixture is a stand-in Sheets backend for the Connected Sheets
+// commands. It records what each command asked for — query strings for reads,
+// decoded request bodies for batchUpdate writes — so tests can assert the wire
+// shape rather than only the rendered output.
+type connectedSheetsFixture struct {
+	server *httptest.Server
+
+	mu           sync.Mutex
+	queries      []string
+	batchUpdates []*sheets.BatchUpdateSpreadsheetRequest
+	// batchReply is returned as replies[0] for every batchUpdate. Tests set it
+	// before invoking a write command.
+	batchReply *sheets.Response
+}
+
+func (f *connectedSheetsFixture) Queries() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]string(nil), f.queries...)
+}
+
+func (f *connectedSheetsFixture) BatchUpdates() []*sheets.BatchUpdateSpreadsheetRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]*sheets.BatchUpdateSpreadsheetRequest(nil), f.batchUpdates...)
+}
+
+// OnlyBatchUpdate returns the single recorded batchUpdate request, failing when
+// a command issued a different number of them.
+func (f *connectedSheetsFixture) OnlyBatchUpdate(t *testing.T) *sheets.BatchUpdateSpreadsheetRequest {
+	t.Helper()
+	updates := f.BatchUpdates()
+	if len(updates) != 1 {
+		t.Fatalf("batchUpdate calls = %d, want 1", len(updates))
+	}
+
+	return updates[0]
+}
+
+func (f *connectedSheetsFixture) SetBatchReply(reply *sheets.Response) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.batchReply = reply
+}
+
+func newConnectedSheetsFixtureServer(t *testing.T) *connectedSheetsFixture {
 	t.Helper()
 	fixture, err := os.ReadFile("testdata/sheets_connected_sheets.json")
 	if err != nil {
@@ -298,12 +343,16 @@ func newConnectedSheetsFixtureServer(t *testing.T) (*httptest.Server, *[]string)
 	if err := json.Unmarshal(fixture, &parsed); err != nil {
 		t.Fatalf("decode Connected Sheets fixture: %v", err)
 	}
-	queries := make([]string, 0)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		queries = append(queries, r.URL.RawQuery)
+	recorder := &connectedSheetsFixture{queries: make([]string, 0)}
+	recorder.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.mu.Lock()
+		recorder.queries = append(recorder.queries, r.URL.RawQuery)
+		recorder.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		path := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/sheets/v4"), "/v4")
 		switch {
+		case strings.HasSuffix(path, ":batchUpdate") && r.Method == http.MethodPost:
+			recorder.serveBatchUpdate(w, r)
 		case strings.Contains(path, "/spreadsheets/connected1/values/") && r.Method == http.MethodGet:
 			// net/http already decoded r.URL.Path, so the trimmed remainder is
 			// the requested A1 range.
@@ -328,7 +377,28 @@ func newConnectedSheetsFixtureServer(t *testing.T) (*httptest.Server, *[]string)
 			http.NotFound(w, r)
 		}
 	}))
-	return srv, &queries
+	t.Cleanup(recorder.server.Close)
+
+	return recorder
+}
+
+func (f *connectedSheetsFixture) serveBatchUpdate(w http.ResponseWriter, r *http.Request) {
+	var request sheets.BatchUpdateSpreadsheetRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	f.mu.Lock()
+	f.batchUpdates = append(f.batchUpdates, &request)
+	reply := f.batchReply
+	f.mu.Unlock()
+
+	response := &sheets.BatchUpdateSpreadsheetResponse{SpreadsheetId: "connected1"}
+	if reply != nil {
+		response.Replies = []*sheets.Response{reply}
+	}
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // connectedSheetsFixtureForRanges mirrors a live spreadsheets.get: when ranges

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"golang.org/x/oauth2"
+	"google.golang.org/api/sheets/v4"
 
 	"github.com/openclaw/gogcli/internal/authclient"
 	"github.com/openclaw/gogcli/internal/googleauth"
@@ -57,6 +58,10 @@ func TestNewServicesWithStoredToken(t *testing.T) {
 		t.Fatalf("NewConnectedSheets: %v", err)
 	}
 
+	if _, err := NewConnectedSheetsWriter(ctx, "a@b.com"); err != nil {
+		t.Fatalf("NewConnectedSheetsWriter: %v", err)
+	}
+
 	if _, err := NewTasks(ctx, "a@b.com"); err != nil {
 		t.Fatalf("NewTasks: %v", err)
 	}
@@ -90,39 +95,59 @@ func TestNewServicesWithStoredToken(t *testing.T) {
 	}
 }
 
-func TestNewConnectedSheetsRequestsReadOnlySheetsAndBigQueryScopes(t *testing.T) {
-	var gotScopes []string
-	ctx := WithAuthDependencies(context.Background(), AuthDependencies{
-		Mode: AuthModeADC,
-		ADCTokenSource: func(_ context.Context, scopes ...string) (oauth2.TokenSource, error) {
-			gotScopes = append([]string(nil), scopes...)
-			return oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "adc-token"}), nil
-		},
-	})
+// The Connected Sheets clients are scope-isolated on purpose: each asks for the
+// narrowest set that still works, and notably neither asks for Drive, which
+// ordinary sheets authorization does carry.
+func TestConnectedSheetsClientsRequestExactScopes(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		newSvc  func(context.Context, string) (*sheets.Service, error)
+		want    []string
+		wantNot string
+	}{{
+		name:    "read-only client",
+		newSvc:  NewConnectedSheets,
+		want:    []string{scopeSpreadsheetsReadOnly, scopeBigQueryReadOnly},
+		wantNot: scopeSpreadsheets,
+	}, {
+		name:    "writer client",
+		newSvc:  NewConnectedSheetsWriter,
+		want:    []string{scopeSpreadsheets, scopeBigQueryReadOnly},
+		wantNot: scopeSpreadsheetsReadOnly,
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			var gotScopes []string
+			ctx := WithAuthDependencies(context.Background(), AuthDependencies{
+				Mode: AuthModeADC,
+				ADCTokenSource: func(_ context.Context, scopes ...string) (oauth2.TokenSource, error) {
+					gotScopes = append([]string(nil), scopes...)
+					return oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "adc-token"}), nil
+				},
+			})
 
-	if _, err := NewConnectedSheets(ctx, "adc"); err != nil {
-		t.Fatalf("NewConnectedSheets: %v", err)
-	}
+			if _, err := test.newSvc(ctx, "adc"); err != nil {
+				t.Fatalf("create client: %v", err)
+			}
 
-	want := map[string]bool{
-		scopeSpreadsheetsReadOnly: false,
-		scopeBigQueryReadOnly:     false,
-	}
+			got := make(map[string]bool, len(gotScopes))
+			for _, scope := range gotScopes {
+				got[scope] = true
+			}
 
-	for _, scope := range gotScopes {
-		if _, ok := want[scope]; ok {
-			want[scope] = true
-		}
-	}
+			for _, scope := range test.want {
+				if !got[scope] {
+					t.Fatalf("missing scope %q in %v", scope, gotScopes)
+				}
+			}
 
-	for scope, found := range want {
-		if !found {
-			t.Fatalf("missing scope %q in %v", scope, gotScopes)
-		}
-	}
+			if got[test.wantNot] {
+				t.Fatalf("unexpected scope %q in %v", test.wantNot, gotScopes)
+			}
 
-	if len(gotScopes) != len(want) {
-		t.Fatalf("unexpected extra scopes: %v", gotScopes)
+			if len(gotScopes) != len(test.want) {
+				t.Fatalf("unexpected extra scopes: %v", gotScopes)
+			}
+		})
 	}
 }
 

@@ -125,6 +125,9 @@ func composeRuntimeGoogleServices(runtime *app.Runtime, factory googleapi.Factor
 	if services.ConnectedSheets == nil {
 		services.ConnectedSheets = factory.ConnectedSheets
 	}
+	if services.ConnectedSheetsWriter == nil {
+		services.ConnectedSheetsWriter = factory.ConnectedSheetsWriter
+	}
 	if services.SitesDrive == nil {
 		services.SitesDrive = factory.SitesDrive
 	}
@@ -402,6 +405,22 @@ func connectedSheetsService(ctx context.Context, account string) (*sheets.Servic
 		return runtime.Services.Sheets(ctx, account)
 	}
 	return nil, serviceError(nil, "Connected Sheets")
+}
+
+func connectedSheetsWriterService(ctx context.Context, account string) (*sheets.Service, error) {
+	runtime, err := runtimeWithService(ctx, "Connected Sheets writer")
+	if err != nil {
+		return nil, serviceError(err, "Connected Sheets writer")
+	}
+	if runtime.Services.ConnectedSheetsWriter != nil {
+		return runtime.Services.ConnectedSheetsWriter(ctx, account)
+	}
+	// Same embedder fallback as connectedSheetsService, except the plain Sheets
+	// client is the right substitute here: it already carries write scope.
+	if runtime.Services.Sheets != nil {
+		return runtime.Services.Sheets(ctx, account)
+	}
+	return nil, serviceError(nil, "Connected Sheets writer")
 }
 
 func sitesDriveService(ctx context.Context, account string) (*drive.Service, error) {

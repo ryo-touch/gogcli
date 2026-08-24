@@ -118,17 +118,20 @@ type Services struct {
 	SearchConsole   SearchConsoleServiceFactory
 	Sheets          SheetsServiceFactory
 	ConnectedSheets SheetsServiceFactory
-	SitesDrive      DriveServiceFactory
-	Slides          SlidesServiceFactory
-	Tasks           TasksServiceFactory
-	YouTubeAPIKey   YouTubeServiceFactory
-	YouTubeAccount  YouTubeServiceFactory
-	YouTubeComments YouTubeServiceFactory
-	YouTubeWrite    YouTubeServiceFactory
-	Zoom            ZoomMeetingClientFactory
-	DriveDownload   DriveDownloadFunc
-	DriveExport     DriveExportFunc
-	OpenURL         OpenURLFunc
+	// ConnectedSheetsWriter carries spreadsheets write access alongside the
+	// BigQuery scope; ConnectedSheets is read-only and cannot batchUpdate.
+	ConnectedSheetsWriter SheetsServiceFactory
+	SitesDrive            DriveServiceFactory
+	Slides                SlidesServiceFactory
+	Tasks                 TasksServiceFactory
+	YouTubeAPIKey         YouTubeServiceFactory
+	YouTubeAccount        YouTubeServiceFactory
+	YouTubeComments       YouTubeServiceFactory
+	YouTubeWrite          YouTubeServiceFactory
+	Zoom                  ZoomMeetingClientFactory
+	DriveDownload         DriveDownloadFunc
+	DriveExport           DriveExportFunc
+	OpenURL               OpenURLFunc
 }
 
 type AuthOperations struct {

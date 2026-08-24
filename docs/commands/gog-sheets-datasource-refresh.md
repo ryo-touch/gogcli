@@ -1,29 +1,18 @@
-# `gog sheets datasource`
+# `gog sheets datasource refresh`
 
 > Generated from `gog schema --json`. Do not edit this page by hand; run `make docs-commands`.
 
-Manage Connected Sheets data sources and extracts
+Queue a refresh of a Connected Sheets data source
 
 ## Usage
 
 ```bash
-gog sheets (sheet) datasource (data-source,data-sources,connected-sheets) <command>
+gog sheets (sheet) datasource (data-source,data-sources,connected-sheets) refresh <spreadsheetId> [<dataSourceId>] [flags]
 ```
 
 ## Parent
 
-- [gog sheets](gog-sheets.md)
-
-## Subcommands
-
-- [gog sheets datasource add](gog-sheets-datasource-add.md) - Add a BigQuery data source
-- [gog sheets datasource cancel-refresh](gog-sheets-datasource-cancel-refresh.md) - Cancel in-flight Connected Sheets refreshes
-- [gog sheets datasource delete](gog-sheets-datasource-delete.md) - Delete a data source and its linked sheet
-- [gog sheets datasource describe](gog-sheets-datasource-describe.md) - Describe a Connected Sheets data source
-- [gog sheets datasource list](gog-sheets-datasource-list.md) - List Connected Sheets data sources
-- [gog sheets datasource refresh](gog-sheets-datasource-refresh.md) - Queue a refresh of a Connected Sheets data source
-- [gog sheets datasource table](gog-sheets-datasource-table.md) - Inspect Connected Sheets data-source tables (extracts)
-- [gog sheets datasource update](gog-sheets-datasource-update.md) - Update a BigQuery data source specification
+- [gog sheets datasource](gog-sheets-datasource.md)
 
 ## Flags
 
@@ -31,6 +20,7 @@ gog sheets (sheet) datasource (data-source,data-sources,connected-sheets) <comma
 | --- | --- | --- | --- |
 | `--access-token` | `string` |  | Use provided access token directly (bypasses stored refresh tokens; token expires in ~1h) |
 | `-a`<br>`--account`<br>`--acct` | `string` |  | Account email, alias, or auto for authenticated Google API commands |
+| `--all` | `bool` |  | Refresh every data source in the spreadsheet |
 | `--client` | `string` |  | OAuth client name (selects stored credentials + token bucket) |
 | `--color` | `string` | auto | Color output: auto\|always\|never |
 | `--disable-commands` | `string` |  | Comma-separated list of disabled commands; dot paths allowed |
@@ -41,6 +31,7 @@ gog sheets (sheet) datasource (data-source,data-sources,connected-sheets) <comma
 | `--gmail-no-send` | `bool` | false | Block Gmail send operations (agent safety) |
 | `-h`<br>`--help` | `kong.helpFlag` |  | Show context-sensitive help. |
 | `--home` | `string` |  | Override gogcli config/data/state/cache root (equivalent to GOG_HOME) |
+| `--ignore-state` | `bool` |  | Refresh regardless of current state; without it a source already in error state fails immediately |
 | `-j`<br>`--json`<br>`--machine` | `bool` | false | Output JSON to stdout (best for scripting) |
 | `--no-input`<br>`--non-interactive`<br>`--noninteractive` | `bool` |  | Never prompt; fail instead (useful for CI) |
 | `-p`<br>`--plain`<br>`--tsv` | `bool` | false | Output stable, parseable text to stdout (TSV; no colors) |
@@ -53,5 +44,5 @@ gog sheets (sheet) datasource (data-source,data-sources,connected-sheets) <comma
 
 ## See Also
 
-- [gog sheets](gog-sheets.md)
+- [gog sheets datasource](gog-sheets-datasource.md)
 - [Command index](README.md)

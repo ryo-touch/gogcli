@@ -16,12 +16,20 @@ import (
 	"github.com/openclaw/gogcli/internal/ui"
 )
 
-const connectedSheetsBigQueryScope = "https://www.googleapis.com/auth/bigquery.readonly"
+const (
+	connectedSheetsBigQueryScope = "https://www.googleapis.com/auth/bigquery.readonly"
+	connectedSheetsWriteScope    = "https://www.googleapis.com/auth/spreadsheets"
+)
 
 type SheetsDataSourceCmd struct {
-	List     SheetsDataSourceListCmd     `cmd:"" default:"withargs" help:"List Connected Sheets data sources"`
-	Describe SheetsDataSourceDescribeCmd `cmd:"" name:"describe" aliases:"get,show,info" help:"Describe a Connected Sheets data source"`
-	Table    SheetsDataSourceTableCmd    `cmd:"" name:"table" aliases:"tables,extract,extracts" help:"Inspect Connected Sheets data-source tables (extracts)"`
+	List          SheetsDataSourceListCmd          `cmd:"" default:"withargs" help:"List Connected Sheets data sources"`
+	Describe      SheetsDataSourceDescribeCmd      `cmd:"" name:"describe" aliases:"get,show,info" help:"Describe a Connected Sheets data source"`
+	Table         SheetsDataSourceTableCmd         `cmd:"" name:"table" aliases:"tables,extract,extracts" help:"Inspect Connected Sheets data-source tables (extracts)"`
+	Refresh       SheetsDataSourceRefreshCmd       `cmd:"" name:"refresh" help:"Queue a refresh of a Connected Sheets data source"`
+	CancelRefresh SheetsDataSourceCancelRefreshCmd `cmd:"" name:"cancel-refresh" aliases:"cancel" help:"Cancel in-flight Connected Sheets refreshes"`
+	Add           SheetsDataSourceAddCmd           `cmd:"" name:"add" aliases:"create" help:"Add a BigQuery data source"`
+	Update        SheetsDataSourceUpdateCmd        `cmd:"" name:"update" aliases:"set" help:"Update a BigQuery data source specification"`
+	Delete        SheetsDataSourceDeleteCmd        `cmd:"" name:"delete" aliases:"rm,remove" help:"Delete a data source and its linked sheet"`
 }
 
 type SheetsDataSourceTableCmd struct {
@@ -582,14 +590,22 @@ func dataSourceColumnCount(allSheets []*sheets.Sheet, dataSourceID string) int {
 	return 0
 }
 
-func wrapConnectedSheetsReadError(err error, account string) error {
+// isInsufficientScopeError reports whether Google rejected the call for missing
+// scopes rather than for missing access to the underlying data. Shared with the
+// write path, which needs the same distinction but different guidance.
+func isInsufficientScopeError(err error) bool {
 	if err == nil {
-		return nil
+		return false
 	}
 	errText := strings.ToLower(err.Error())
-	if !strings.Contains(errText, "insufficient authentication scopes") &&
-		!strings.Contains(errText, "access_token_scope_insufficient") &&
-		!strings.Contains(errText, "insufficientpermissions") {
+
+	return strings.Contains(errText, "insufficient authentication scopes") ||
+		strings.Contains(errText, "access_token_scope_insufficient") ||
+		strings.Contains(errText, "insufficientpermissions")
+}
+
+func wrapConnectedSheetsReadError(err error, account string) error {
+	if err == nil || !isInsufficientScopeError(err) {
 		return err
 	}
 	return errfmt.NewUserFacingError(
